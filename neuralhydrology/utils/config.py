@@ -317,6 +317,10 @@ class Config(object):
         return self._get_value_verbose("data_dir")
 
     @property
+    def satimg_dir(self) -> Path:
+        return self._get_value_verbose("satimg_dir")
+
+    @property
     def dataset(self) -> str:
         return self._get_value_verbose("dataset")
 

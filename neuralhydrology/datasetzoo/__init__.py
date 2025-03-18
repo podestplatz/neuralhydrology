@@ -4,6 +4,7 @@ from neuralhydrology.datasetzoo.camelsbr import CamelsBR
 from neuralhydrology.datasetzoo.camelscl import CamelsCL
 from neuralhydrology.datasetzoo.camelsgb import CamelsGB
 from neuralhydrology.datasetzoo.camelsus import CamelsUS
+from neuralhydrology.datasetzoo.camelsus_satimg import CamelsUS_SatImg
 from neuralhydrology.datasetzoo.caravan import Caravan
 from neuralhydrology.datasetzoo.genericdataset import GenericDataset
 from neuralhydrology.datasetzoo.hourlycamelsus import HourlyCamelsUS
@@ -77,6 +78,8 @@ def get_dataset(cfg: Config,
         Dataset = LamaH
     elif cfg.dataset.lower() == "caravan":
         Dataset = Caravan
+    elif cfg.dataset.lower() == "camelsus_satimg":
+        Dataset = CamelsUS_SatImg
     else:
         raise NotImplementedError(f"No dataset class implemented for dataset {cfg.dataset}")
 
