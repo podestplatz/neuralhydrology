@@ -19,7 +19,7 @@ from neuralhydrology.evaluation import get_tester
 from neuralhydrology.evaluation.tester import BaseTester
 from neuralhydrology.modelzoo import get_model
 from neuralhydrology.training import get_loss_obj, get_optimizer, get_regularization_obj
-from neuralhydrology.training.logger import Logger
+from neuralhydrology.training.wandb_logger import Logger
 from neuralhydrology.utils.config import Config
 from neuralhydrology.utils.logging_utils import setup_logging
 
@@ -269,6 +269,8 @@ class BaseTrainer(object):
 
         optimizer_path = self.cfg.run_dir / f"optimizer_state_epoch{epoch:03d}.pt"
         torch.save(self.optimizer.state_dict(), str(optimizer_path))
+
+        self.experiment_logger.log_model(weight_path, optimizer_path)
 
     def _train_epoch(self, epoch: int):
         self.model.train()
