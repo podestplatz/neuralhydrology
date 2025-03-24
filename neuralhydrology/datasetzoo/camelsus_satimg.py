@@ -77,9 +77,21 @@ class CamelsUS_SatImg(CamelsUS):
     def _load_attributes(self) -> pd.DataFrame:
         """Override the parent method to ensure the right load_camels_us_attributes function is called."""
         num_workers = min(self.cfg.num_workers, len(self.basins))
-        return load_camels_us_satimg_attributes(self.cfg.satimg_dir, basins=self.basins, num_workers=num_workers)
+        return load_camels_us_satimg_attributes(
+            self.cfg.satimg_dir,
+            basins=self.basins,
+            num_workers=num_workers,
+            patch_embedding_dim=self.cfg.patch_embedding_dimensions
+        )
 
-def _process_single_basin(basin: str, embeddings_dir: Path, raw_tile_dir: Path, basin_attribute_columns: List[int]) -> Tuple[str, np.ndarray | None]:
+
+def _process_single_basin(
+    basin: str,
+    embeddings_dir: Path,
+    raw_tile_dir: Path,
+    basin_attribute_columns: List[int],
+    patch_embedding_dim: Union[int, list[int], None] = None
+) -> Tuple[str, Union[np.ndarray, None]]:
     """Process a single basin's embeddings.
     
     Parameters
@@ -105,6 +117,12 @@ def _process_single_basin(basin: str, embeddings_dir: Path, raw_tile_dir: Path, 
     # get a list of all available embedding files
     embedding_basin_paths = list(embeddings_basin_dir.rglob('*.cropped.embeddings.nc'))
     
+    load_class_patch_embeddings = True
+    if patch_embedding_dim is not None:
+        load_class_patch_embeddings = False
+        if isinstance(patch_embedding_dim, list) and len(patch_embedding_dim) == 0:
+            patch_embedding_dim = list(range(1024))
+
     # aggregate the class patch embeddings based on the overlap percentage
     aggregated_embeddings = None
     aggregated_overlap_proportion = 0
@@ -121,7 +139,12 @@ def _process_single_basin(basin: str, embeddings_dir: Path, raw_tile_dir: Path, 
             
         # load the embedding of the tile
         with xr.open_dataset(embedding_file) as embeddings:
-            tile_embedding: xr.DataArray = embeddings["class_token_embedding"].load()
+            if load_class_patch_embeddings:
+                tile_embedding: xr.DataArray = embeddings["class_token_embedding"].load()
+            else: 
+                tile_embedding = embeddings.token_embeddings[:, patch_embedding_dim]
+                if isinstance(patch_embedding_dim, list):
+                    tile_embedding = tile_embedding.sum(dim="embedding")
             
         # aggregate the embedding of the tile weighted by the percentage it overlaps with the basin's area
         if aggregated_embeddings is None:
@@ -141,7 +164,12 @@ def _process_single_basin(basin: str, embeddings_dir: Path, raw_tile_dir: Path, 
     
     return basin, basin_embedding.values
 
-def load_camels_us_satimg_attributes(data_dir: Path, basins: List[str] = [], num_workers: int = 1) -> pd.DataFrame:
+def load_camels_us_satimg_attributes(
+    data_dir: Path,
+    basins: List[str] = [],
+    num_workers: int = 1,
+    patch_embedding_dim: Union[int, list[int], None] = None
+) -> pd.DataFrame:
     """
     Load Satellite image embeddings as attributes
     
@@ -165,10 +193,13 @@ def load_camels_us_satimg_attributes(data_dir: Path, basins: List[str] = [], num
         basins = [d.name for d in embeddings_dir.glob("*") if d.is_dir()]
 
     # Create a partial function with the fixed arguments
-    process_func = partial(_process_single_basin, 
-                         embeddings_dir=embeddings_dir,
-                         raw_tile_dir=raw_tile_dir,
-                         basin_attribute_columns=basin_attribute_columns)
+    process_func = partial(
+        _process_single_basin, 
+         embeddings_dir=embeddings_dir,
+         raw_tile_dir=raw_tile_dir,
+         basin_attribute_columns=basin_attribute_columns,
+         patch_embedding_dim=patch_embedding_dim
+    )
 
     # Process basins in parallel
     if num_workers > 1:     
@@ -191,4 +222,9 @@ def load_camels_us_satimg_attributes(data_dir: Path, basins: List[str] = [], num
 
 
 if __name__ == "__main__":
-    load_camels_us_satimg_attributes(Path("/system/user/publicdata/hydrology/CAMELS_US_Satellite_Images/"), ["01013500", "01030500"], num_workers=2)
+    load_camels_us_satimg_attributes(
+        Path("/system/user/publicdata/hydrology/CAMELS_US_Satellite_Images/"),
+        ["01013500", "01030500"],
+        num_workers=1,
+        patch_embedding_dim=[0]
+    )

@@ -784,6 +784,10 @@ class Config(object):
             return []
 
     @property
+    def patch_embedding_dimensions(self) -> List[int]:
+        return self._as_default_list(self._cfg.get("patch_embedding_dimensions", []))
+
+    @property
     def statics_embedding(self) -> dict:
         embedding_spec = self._cfg.get("statics_embedding", None)
 
