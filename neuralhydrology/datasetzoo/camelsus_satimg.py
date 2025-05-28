@@ -89,7 +89,6 @@ def _process_single_basin(
     basin: str,
     embeddings_dir: Path,
     raw_tile_dir: Path,
-    basin_attribute_columns: List[int],
     patch_embedding_dim: Union[int, list[int], None] = None
 ) -> Tuple[str, Union[np.ndarray, None]]:
     """Process a single basin's embeddings.
@@ -102,8 +101,6 @@ def _process_single_basin(
         Directory containing the embeddings
     raw_tile_dir : Path
         Directory containing the raw tiles
-    basin_attribute_columns : List[int]
-        List of column indices for the attributes
         
     Returns
     -------
@@ -115,10 +112,10 @@ def _process_single_basin(
         raise FileNotFoundError(f"Satellite image directory not found for basin {basin}. Expected directory: {embeddings_basin_dir}")
 
     # get a list of all available embedding files
-    embedding_basin_paths = list(embeddings_basin_dir.rglob('*.cropped.embeddings.nc'))
+    embedding_basin_paths = list(embeddings_basin_dir.rglob('*.cropped.embed.nc'))
     
     load_class_patch_embeddings = True
-    if patch_embedding_dim is not None:
+    if patch_embedding_dim is not None and patch_embedding_dim != []:
         load_class_patch_embeddings = False
         if isinstance(patch_embedding_dim, list) and len(patch_embedding_dim) == 0:
             patch_embedding_dim = list(range(1024))
@@ -140,11 +137,9 @@ def _process_single_basin(
         # load the embedding of the tile
         with xr.open_dataset(embedding_file) as embeddings:
             if load_class_patch_embeddings:
-                tile_embedding: xr.DataArray = embeddings["class_token_embedding"].load()
+                tile_embedding: np.ndarray = embeddings["class_token"].values[0]
             else: 
-                tile_embedding = embeddings.token_embeddings[:, patch_embedding_dim]
-                if isinstance(patch_embedding_dim, list):
-                    tile_embedding = tile_embedding.sum(dim="embedding")
+                tile_embedding = embeddings.token_embeddings[:, patch_embedding_dim].mean(dim="patches")
             
         # aggregate the embedding of the tile weighted by the percentage it overlaps with the basin's area
         if aggregated_embeddings is None:
@@ -160,9 +155,9 @@ def _process_single_basin(
         return basin, None
 
     # normalize the embeddings again
-    basin_embedding: xr.DataArray = aggregated_embeddings / aggregated_overlap_proportion
+    basin_embedding: np.ndarray = aggregated_embeddings / aggregated_overlap_proportion
     
-    return basin, basin_embedding.values
+    return basin, basin_embedding
 
 def load_camels_us_satimg_attributes(
     data_dir: Path,
@@ -178,16 +173,20 @@ def load_camels_us_satimg_attributes(
     The subdirectory structure of the raw tile dir and the embeddings dir are assumed to be the same:
     <basin_id>/<utm_tile_name>/<timestamp>_<utm_tile_name>.cropped{.tif|.embeddings.nc}.
     """
+    def init_basin_attributes(basin_attribute_columns: List[int]) -> pd.DataFrame:
+        basin_attributes = pd.DataFrame({}, columns=['basin'] + basin_attribute_columns)
+        basin_attributes.set_index(keys=["basin"], inplace=True)
+        return basin_attributes
+    
     raw_tile_dirname = "utm_tile_based"
-    embeddings_dirname = "utm_tile_based_embedded"
+    embeddings_dirname = "utm_tile_based_embedded_ae"
 
     embeddings_dir = data_dir / embeddings_dirname
     raw_tile_dir = data_dir / raw_tile_dirname
 
     # the dataframe housing the embeddings as attributes (each embedding dimension corresponds to one attribute column)
-    basin_attribute_columns = list(range(1024))
-    basin_attributes = pd.DataFrame({}, columns=['basin'] + basin_attribute_columns)
-    basin_attributes.set_index(keys=["basin"], inplace=True)
+    basin_attributes = None
+    basin_attribute_columns = None
 
     if not basins:
         basins = [d.name for d in embeddings_dir.glob("*") if d.is_dir()]
@@ -197,7 +196,6 @@ def load_camels_us_satimg_attributes(
         _process_single_basin, 
          embeddings_dir=embeddings_dir,
          raw_tile_dir=raw_tile_dir,
-         basin_attribute_columns=basin_attribute_columns,
          patch_embedding_dim=patch_embedding_dim
     )
 
@@ -209,12 +207,24 @@ def load_camels_us_satimg_attributes(
                              total=len(basins), 
                              desc="Processing basins"):
                 basin, embeddings = future.result()
+                
+                # lazily initialise basin attributes dataframe with the actual number of columns
+                if basin_attributes is None:
+                    basin_attribute_columns = list(range(embeddings.shape[0]))
+                    basin_attributes = init_basin_attributes(basin_attribute_columns)
+
                 if embeddings is not None:
                     basin_attributes.loc[basin, basin_attribute_columns] = embeddings
                     
     else:
         for basin in tqdm(basins, desc="Processing basins"):
             basin, embeddings = process_func(basin)
+
+            # lazily initialise basin attributes dataframe with the actual number of columns
+            if basin_attributes is None:
+                basin_attribute_columns = list(range(embeddings.shape[0]))
+                basin_attributes = init_basin_attributes(basin_attribute_columns)
+
             if embeddings is not None:
                 basin_attributes.loc[basin, basin_attribute_columns] = embeddings
             
@@ -222,9 +232,10 @@ def load_camels_us_satimg_attributes(
 
 
 if __name__ == "__main__":
-    load_camels_us_satimg_attributes(
+    df = load_camels_us_satimg_attributes(
         Path("/system/user/publicdata/hydrology/CAMELS_US_Satellite_Images/"),
         ["01013500", "01030500"],
-        num_workers=1,
-        patch_embedding_dim=[0]
+        num_workers=2,
+        patch_embedding_dim=[]
     )
+    print(df)
