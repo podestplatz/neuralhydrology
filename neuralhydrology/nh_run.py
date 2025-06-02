@@ -2,6 +2,7 @@
 import argparse
 import sys
 from pathlib import Path
+from typing import Optional
 
 # make sure code directory is in path, even if the package is not installed using the setup.py
 sys.path.append(str(Path(__file__).parent.parent))
@@ -13,7 +14,7 @@ from neuralhydrology.utils.logging_utils import setup_logging
 
 def _get_args() -> dict:
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=["train", "continue_training", "finetune", "evaluate"])
+    parser.add_argument('mode', choices=["train", "continue_training", "finetune", "evaluate", "sweep"])
     parser.add_argument('--config-file', type=str)
     parser.add_argument('--run-dir', type=str)
     parser.add_argument('--epoch', type=int, help="Epoch, of which the model should be evaluated")
@@ -22,7 +23,7 @@ def _get_args() -> dict:
                         help="GPU id to use. Overrides config argument 'device'. Use a value < 0 for CPU.")
     args = vars(parser.parse_args())
 
-    if (args["mode"] in ["train", "finetune"]) and (args["config_file"] is None):
+    if (args["mode"] in ["train", "finetune", "sweep"]) and (args["config_file"] is None):
         raise ValueError("Missing path to config file")
 
     if (args["mode"] == "continue_training") and (args["run_dir"] is None):
@@ -47,13 +48,15 @@ def _main():
                      gpu=args["gpu"])
     elif args["mode"] == "finetune":
         finetune(config_file=Path(args["config_file"]), gpu=args["gpu"])
+    elif args["mode"] == "sweep":
+        sweep_run(config_file=Path(args["config_file"]), gpu=args["gpu"])
     elif args["mode"] == "evaluate":
         eval_run(run_dir=Path(args["run_dir"]), period=args["period"], epoch=args["epoch"], gpu=args["gpu"])
     else:
         raise RuntimeError(f"Unknown mode {args['mode']}")
 
 
-def start_run(config_file: Path, gpu: int = None):
+def start_run(config_file: Path, gpu: Optional[int] = None):
     """Start training a model.
     
     Parameters
@@ -77,7 +80,7 @@ def start_run(config_file: Path, gpu: int = None):
     start_training(config)
 
 
-def continue_run(run_dir: Path, config_file: Path = None, gpu: int = None):
+def continue_run(run_dir: Path, config_file: Optional[Path] = None, gpu: Optional[int] = None):
     """Continue model training.
     
     Parameters
@@ -146,7 +149,101 @@ def finetune(config_file: Path = None, gpu: int = None):
     start_training(config)
 
 
-def eval_run(run_dir: Path, period: str, epoch: int = None, gpu: int = None):
+def sweep_run(config_file: Path, gpu: Optional[int] = None):
+    """Run hyperparameter sweep using wandb.
+
+    This function waits for wandb sweep to send hyperparameter configurations.
+    For each configuration, it creates a modified config file with sweep parameters
+    and starts training.
+
+    Parameters
+    ----------
+    config_file : Path
+        Path to the base configuration file (.yml). Sweep parameters will override
+        values from this base configuration.
+    gpu : int, optional
+        GPU id to use. Will override config argument 'device'. A value smaller than zero indicates CPU.
+        Don't use this argument if you want to use the device as specified in the config file e.g. MPS.
+
+    """
+    import wandb
+    import tempfile
+    import yaml
+    from datetime import datetime
+    import shutil
+    
+    # Initialize wandb run - this will receive sweep parameters
+    run = wandb.init()
+    
+    tmp_config_path = None
+    try:
+        # Load base config
+        base_config = Config(config_file)
+        
+        # Get sweep parameters from wandb
+        sweep_params = dict(wandb.config)
+        
+        # Create a temporary config file with sweep parameters applied
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as tmp_file:
+            # Convert base config to dict and update with sweep parameters
+            config_dict = base_config.as_dict()
+            config_dict.update(sweep_params)
+            
+            # Write combined config to temporary file
+            yaml.dump(config_dict, tmp_file, default_flow_style=False)
+            tmp_config_path = Path(tmp_file.name)
+        
+        # Load the combined config
+        sweep_config = Config(tmp_config_path)
+        
+        # Apply GPU override if specified
+        if gpu is not None and gpu >= 0:
+            sweep_config.device = f"cuda:{gpu}"
+        if gpu is not None and gpu < 0:
+            sweep_config.device = "cpu"
+        
+        # Start training with the sweep configuration
+        start_training(sweep_config)
+        
+        # Save the sweep configuration file instead of deleting it
+        if tmp_config_path is not None and wandb.run is not None:
+            # Create sweep directory in the same location as base config
+            base_config_dir = config_file.parent
+            
+            # Get sweep name from wandb run
+            sweep_name = "unknown_sweep"
+            if hasattr(wandb.run, 'sweep_id') and wandb.run.sweep_id:
+                # Try to get sweep name from wandb API
+                try:
+                    api = wandb.Api()
+                    sweep = api.sweep(f"{wandb.run.entity}/{wandb.run.project}/{wandb.run.sweep_id}")
+                    if hasattr(sweep, 'name') and sweep.name:
+                        sweep_name = sweep.name
+                    else:
+                        # Fall back to sweep ID if no name is set
+                        sweep_name = wandb.run.sweep_id
+                except:
+                    # If API call fails, use sweep ID
+                    sweep_name = wandb.run.sweep_id
+            
+            sweep_dir = base_config_dir / f"sweep_{sweep_name}"
+            sweep_dir.mkdir(exist_ok=True)
+            
+            # Use wandb run name as filename
+            run_name = wandb.run.name
+            sweep_config_path = sweep_dir / f"{run_name}.yml"
+            
+            # Copy the temporary config to the sweep directory
+            shutil.copy2(tmp_config_path, sweep_config_path)
+            print(f"Saved sweep configuration to: {sweep_config_path}")
+        
+    finally:
+        # Clean up temporary file
+        if tmp_config_path is not None:
+            tmp_config_path.unlink(missing_ok=True)
+
+
+def eval_run(run_dir: Path, period: str, epoch: Optional[int] = None, gpu: Optional[int] = None):
     """Start evaluating a trained model.
     
     Parameters

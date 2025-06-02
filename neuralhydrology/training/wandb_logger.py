@@ -75,12 +75,20 @@ class Logger(object):
 
     def start_tb(self):
         """ Start WandB logging. """
-        self.run = wandb.init(
-            project="neuralhydrology",
-            dir=self.log_dir / "wandb",
-            tags=[self.cfg.experiment_name],
-            config=self.cfg.as_dict()
-        )
+        # Check if wandb is already initialized (e.g., in sweep mode)
+        if wandb.run is not None:
+            # Use the existing wandb run (for sweeps)
+            self.run = wandb.run
+            # Update the config with our run configuration
+            wandb.config.update(self.cfg.as_dict(), allow_val_change=True)
+        else:
+            # Initialize a new wandb run (for normal training)
+            self.run = wandb.init(
+                project="neuralhydrology",
+                dir=self.log_dir / "wandb",
+                tags=[self.cfg.experiment_name],
+                config=self.cfg.as_dict()
+            )
 
     def stop_tb(self):
         """ Stop tensorboard logging. """
