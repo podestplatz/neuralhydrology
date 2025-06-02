@@ -62,7 +62,7 @@ class CamelsUS_SatImg(CamelsUS):
                  id_to_int: Dict[str, int] = {},
                  scaler: Dict[str, Union[pd.Series, xr.DataArray]] = {}):
         # ensure that all embedding dimensions will be registered as static attribute
-        cfg._cfg["static_attributes"] = list(range(1024))
+        cfg._cfg["static_attributes"] = list(range(256))
 
         super().__init__(
             cfg=cfg,
