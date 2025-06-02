@@ -1,6 +1,6 @@
 import logging
 import warnings
-from typing import List
+from typing import List, Optional
 
 import torch
 
@@ -29,13 +29,92 @@ def get_optimizer(model: torch.nn.Module, cfg: Config) -> torch.optim.Optimizer:
         Optimizer object that can be used for model training.
     """
     if cfg.optimizer.lower() == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate[0])
+        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
     elif cfg.optimizer.lower() == "adamw":
-        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate[0])
+        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
     else:
         raise NotImplementedError(f"{cfg.optimizer} not implemented or not linked in `get_optimizer()`")
 
     return optimizer
+
+
+def get_lr_scheduler(optimizer: torch.optim.Optimizer, cfg: Config) -> Optional[torch.optim.lr_scheduler.LRScheduler]:
+    """Get learning rate scheduler object, depending on the run configuration.
+    
+    Supports common PyTorch learning rate schedulers.
+    
+    Parameters
+    ----------
+    optimizer : torch.optim.Optimizer
+        The optimizer for which to create a learning rate scheduler.
+    cfg : Config
+        The run configuration containing lr_scheduler settings.
+
+    Returns
+    -------
+    Optional[torch.optim.lr_scheduler.LRScheduler]
+        Learning rate scheduler object that can be used during training.
+        Returns None if no scheduler is configured.
+        
+    Raises
+    ------
+    NotImplementedError
+        If the specified scheduler type is not implemented.
+    ValueError
+        If required scheduler parameters are missing.
+    """
+    if not cfg.lr_scheduler or 'type' not in cfg.lr_scheduler:
+        return None
+    
+    scheduler_type = cfg.lr_scheduler['type'].lower()
+    
+    # Remove 'type' from the config and use the rest as kwargs
+    scheduler_kwargs = {k: v for k, v in cfg.lr_scheduler.items() if k != 'type'}
+    
+    if scheduler_type == 'steplr':
+        if 'step_size' not in scheduler_kwargs:
+            raise ValueError("StepLR scheduler requires 'step_size' parameter")
+        return torch.optim.lr_scheduler.StepLR(optimizer, **scheduler_kwargs)
+    
+    elif scheduler_type == 'multisteplr':
+        if 'milestones' not in scheduler_kwargs:
+            raise ValueError("MultiStepLR scheduler requires 'milestones' parameter")
+        return torch.optim.lr_scheduler.MultiStepLR(optimizer, **scheduler_kwargs)
+    
+    elif scheduler_type == 'exponentiallr':
+        if 'gamma' not in scheduler_kwargs:
+            raise ValueError("ExponentialLR scheduler requires 'gamma' parameter")
+        return torch.optim.lr_scheduler.ExponentialLR(optimizer, **scheduler_kwargs)
+    
+    elif scheduler_type == 'cosineannealinglr':
+        if 'T_max' not in scheduler_kwargs:
+            raise ValueError("CosineAnnealingLR scheduler requires 'T_max' parameter")
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **scheduler_kwargs)
+    
+    elif scheduler_type == 'reducelronplateau':
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **scheduler_kwargs)
+    
+    elif scheduler_type == 'cosineannealingwarmrestarts':
+        if 'T_0' not in scheduler_kwargs:
+            raise ValueError("CosineAnnealingWarmRestarts scheduler requires 'T_0' parameter")
+        return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, **scheduler_kwargs)
+    
+    elif scheduler_type == 'linearlr':
+        if 'start_factor' not in scheduler_kwargs:
+            scheduler_kwargs['start_factor'] = 1.0
+        if 'total_iters' not in scheduler_kwargs:
+            raise ValueError("LinearLR scheduler requires 'total_iters' parameter")
+        return torch.optim.lr_scheduler.LinearLR(optimizer, **scheduler_kwargs)
+    
+    elif scheduler_type == 'polynomiallr':
+        if 'total_iters' not in scheduler_kwargs:
+            raise ValueError("PolynomialLR scheduler requires 'total_iters' parameter")
+        if 'power' not in scheduler_kwargs:
+            scheduler_kwargs['power'] = 1.0
+        return torch.optim.lr_scheduler.PolynomialLR(optimizer, **scheduler_kwargs)
+    
+    else:
+        raise NotImplementedError(f"Learning rate scheduler '{scheduler_type}' not implemented or not linked in `get_lr_scheduler()`")
 
 
 def get_loss_obj(cfg: Config) -> loss.BaseLoss:

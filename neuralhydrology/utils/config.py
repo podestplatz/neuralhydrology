@@ -524,16 +524,37 @@ class Config(object):
         return self._as_default_dict(self._cfg.get("lagged_features", {}))
 
     @property
-    def learning_rate(self) -> Dict[int, float]:
+    def learning_rate(self) -> float:
+        """Initial learning rate for training.
+        
+        Returns
+        -------
+        float
+            The initial learning rate value.
+        """
         if ("learning_rate" in self._cfg.keys()) and (self._cfg["learning_rate"] is not None):
             if isinstance(self._cfg["learning_rate"], float):
-                return {0: self._cfg["learning_rate"]}
-            elif isinstance(self._cfg["learning_rate"], dict):
                 return self._cfg["learning_rate"]
+            elif isinstance(self._cfg["learning_rate"], dict):
+                # For backwards compatibility, if a dict is provided, use the first value
+                return list(self._cfg["learning_rate"].values())[0]
             else:
-                raise ValueError("Unsupported data type for learning rate. Use either dict (epoch to float) or float.")
+                raise ValueError("Unsupported data type for learning rate. Use float for initial learning rate.")
         else:
             raise ValueError("No learning rate specified in the config (.yml).")
+
+    @property
+    def lr_scheduler(self) -> dict:
+        """Learning rate scheduler configuration.
+        
+        Returns
+        -------
+        dict
+            Configuration dictionary for the learning rate scheduler. Contains 'type' key
+            specifying the scheduler type and additional parameters as keyword arguments.
+            Returns empty dict if no scheduler is configured.
+        """
+        return self._as_default_dict(self._cfg.get("lr_scheduler", {}))
 
     @property
     def log_interval(self) -> int:

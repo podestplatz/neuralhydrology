@@ -4,7 +4,7 @@ import random
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 import torch
@@ -18,7 +18,7 @@ from neuralhydrology.datautils.utils import load_basin_file, load_scaler
 from neuralhydrology.evaluation import get_tester
 from neuralhydrology.evaluation.tester import BaseTester
 from neuralhydrology.modelzoo import get_model
-from neuralhydrology.training import get_loss_obj, get_optimizer, get_regularization_obj
+from neuralhydrology.training import get_loss_obj, get_optimizer, get_regularization_obj, get_lr_scheduler
 from neuralhydrology.training.wandb_logger import Logger
 from neuralhydrology.utils.config import Config
 from neuralhydrology.utils.logging_utils import setup_logging
@@ -40,6 +40,7 @@ class BaseTrainer(object):
         self.cfg = cfg
         self.model = None
         self.optimizer = None
+        self.lr_scheduler = None
         self.loss_obj = None
         self.experiment_logger = None
         self.loader = None
@@ -84,6 +85,9 @@ class BaseTrainer(object):
 
     def _get_optimizer(self) -> torch.optim.Optimizer:
         return get_optimizer(model=self.model, cfg=self.cfg)
+
+    def _get_lr_scheduler(self) -> Optional[torch.optim.lr_scheduler.LRScheduler]:
+        return get_lr_scheduler(optimizer=self.optimizer, cfg=self.cfg)
 
     def _get_loss_obj(self) -> loss.BaseLoss:
         return get_loss_obj(cfg=self.cfg)
@@ -164,6 +168,7 @@ class BaseTrainer(object):
             self._freeze_model_parts()
 
         self.optimizer = self._get_optimizer()
+        self.lr_scheduler = self._get_lr_scheduler()
         self.loss_obj = self._get_loss_obj().to(self.device)
 
         # Add possible regularization terms to the loss function.
@@ -206,12 +211,22 @@ class BaseTrainer(object):
         ``validate_every`` epochs. Model and optimizer state are saved after every ``save_weights_every`` epochs.
         """
         for epoch in range(self._epoch + 1, self._epoch + self.cfg.epochs + 1):
-            if epoch in self.cfg.learning_rate.keys():
-                LOGGER.info(f"Setting learning rate to {self.cfg.learning_rate[epoch]}")
-                for param_group in self.optimizer.param_groups:
-                    param_group["lr"] = self.cfg.learning_rate[epoch]
-
             self._train_epoch(epoch=epoch)
+            
+            # Step the learning rate scheduler if one is configured
+            if self.lr_scheduler is not None:
+                # For ReduceLROnPlateau, we need to pass the validation loss
+                if isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    # We'll step this scheduler after validation, not here
+                    pass
+                else:
+                    self.lr_scheduler.step()
+                
+                # Log current learning rate to tensorboard/wandb
+                current_lr = self.optimizer.param_groups[0]['lr']
+                if self.experiment_logger is not None:
+                    self.experiment_logger.log_lr(current_lr)
+
             avg_losses = self.experiment_logger.summarise()
             loss_str = ", ".join(f"{k}: {v:.5f}" for k, v in avg_losses.items())
             LOGGER.info(f"Epoch {epoch} average loss: {loss_str}")
@@ -233,6 +248,15 @@ class BaseTrainer(object):
                     print_msg += f" -- Median validation metrics: "
                     print_msg += ", ".join(f"{k}: {v:.5f}" for k, v in valid_metrics.items() if k != 'avg_total_loss')
                     LOGGER.info(print_msg)
+                
+                # Step ReduceLROnPlateau scheduler after validation
+                if (self.lr_scheduler is not None and 
+                    isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)):
+                    self.lr_scheduler.step(valid_metrics['avg_total_loss'])
+                    # Log current learning rate after plateau scheduler step
+                    current_lr = self.optimizer.param_groups[0]['lr']
+                    if self.experiment_logger is not None:
+                        self.experiment_logger.log_lr(current_lr)
 
         # make sure to close tensorboard to avoid losing the last epoch
         if self.cfg.log_tensorboard:

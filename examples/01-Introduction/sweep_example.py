@@ -38,13 +38,19 @@ sweep_config = {
             'values': [0.001, 0.0005, 0.0001]
         },
         'hidden_size': {
-            'values': [64, 128, 256]
+            'values': [64, 128, 256]  # actually sensible
         },
         'dropout': {
-            'values': [0.0, 0.1, 0.2]
+            'values': [0.0, 0.1, 0.2]  # sweep up to 0.5
         },
-        'epochs': {
+        'epochs': {  # maybe remove it, or change in to a higher value
             'value': 10  # Fixed value
+        }, 
+        'target_noise_std': {
+            'values': [0.0, 0.001, 0.005, 0.01, 0.05]
+        },
+        'batch_size': {
+            'values': [64, 128, 256]
         }
     }
 }

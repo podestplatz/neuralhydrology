@@ -148,6 +148,17 @@ class Logger(object):
             type="optimizer",
         )
 
+    def log_lr(self, learning_rate: float):
+        """Log current learning rate.
+
+        Parameters
+        ----------
+        learning_rate : float
+            Current learning rate value.
+        """
+        if self.run is not None:
+            self.run.log({"train/learning_rate": learning_rate}, step=self.update)
+
     def summarise(self) -> Union[float, Dict[str, float]]:
         """"Log the results of the entire training or validation epoch.
 

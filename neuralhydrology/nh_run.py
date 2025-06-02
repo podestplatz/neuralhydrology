@@ -111,7 +111,7 @@ def continue_run(run_dir: Path, config_file: Optional[Path] = None, gpu: Optiona
     start_training(base_config)
 
 
-def finetune(config_file: Path = None, gpu: int = None):
+def finetune(config_file: Optional[Path] = None, gpu: Optional[int] = None):
     """Finetune a pre-trained model.
 
     Parameters
@@ -126,6 +126,9 @@ def finetune(config_file: Path = None, gpu: int = None):
         Don't use this argument if you want to use the device as specified in the config file e.g. MPS.
 
     """
+    if config_file is None:
+        raise ValueError("config_file is required for finetuning")
+        
     # load finetune config and check for a non-empty list of finetune_modules
     temp_config = Config(config_file)
     if not temp_config.finetune_modules:
@@ -169,7 +172,6 @@ def sweep_run(config_file: Path, gpu: Optional[int] = None):
     import wandb
     import tempfile
     import yaml
-    from datetime import datetime
     import shutil
     
     # Initialize wandb run - this will receive sweep parameters
@@ -186,7 +188,7 @@ def sweep_run(config_file: Path, gpu: Optional[int] = None):
         # Create a temporary config file with sweep parameters applied
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as tmp_file:
             # Convert base config to dict and update with sweep parameters
-            config_dict = base_config.as_dict()
+            config_dict = base_config.as_dict()  # TODO: use the existing update function of Config to update the config.
             config_dict.update(sweep_params)
             
             # Write combined config to temporary file
